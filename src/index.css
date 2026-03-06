@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+@theme {
+  --color-maria-pink: #ff85a2;
+  --color-maria-light-pink: #fff0f3;
+  --color-jeans-blue: #2c3e50;
+  --color-jeans-dark: #1a1a1a;
+}
+
+@layer base {
+  body {
+    @apply transition-colors duration-300;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
