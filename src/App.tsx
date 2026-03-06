@@ -103,6 +103,7 @@ export default function App() {
   const [selectedSizes, setSelectedSizes] = useState<{[key: string]: number}>({});
   const [modalCategory, setModalCategory] = useState<Category>('Feminino');
   const [modalType, setModalType] = useState<ProductType>('Calça');
+  const [selectedGridType, setSelectedGridType] = useState<'numeric' | 'letters' | 'infantil'>('numeric');
 
   // Cart State
   const [cart, setCart] = useState<SaleItem[]>([]);
@@ -832,7 +833,14 @@ export default function App() {
                       name="type" 
                       list="type-suggestions"
                       value={modalType}
-                      onChange={(e) => setModalType(e.target.value)}
+                      onChange={(e) => {
+                        const type = e.target.value;
+                        setModalType(type);
+                        if (modalCategory !== 'Infantil') {
+                          if (['Calça', 'Bermuda', 'Shorts', 'Saia'].includes(type)) setSelectedGridType('numeric');
+                          else setSelectedGridType('letters');
+                        }
+                      }}
                       required
                       className={cn("w-full px-4 py-3 rounded-xl border focus:ring-2", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30 focus:ring-jeans-blue" : "bg-gray-50 border-maria-pink/20 focus:ring-maria-pink")}
                       placeholder="Ex: Calça, Shorts..."
@@ -846,7 +854,13 @@ export default function App() {
                     <select 
                       name="category" 
                       value={modalCategory}
-                      onChange={(e) => setModalCategory(e.target.value as Category)}
+                      onChange={(e) => {
+                        const cat = e.target.value as Category;
+                        setModalCategory(cat);
+                        if (cat === 'Infantil') setSelectedGridType('infantil');
+                        else if (['Calça', 'Bermuda', 'Shorts', 'Saia'].includes(modalType)) setSelectedGridType('numeric');
+                        else setSelectedGridType('letters');
+                      }}
                       className={cn("w-full px-4 py-3 rounded-xl border focus:ring-2", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30 focus:ring-jeans-blue" : "bg-gray-50 border-maria-pink/20 focus:ring-maria-pink")}
                     >
                       <option value="Feminino">Feminino</option>
@@ -880,6 +894,34 @@ export default function App() {
 
                 {!editingProduct && (
                   <div className="space-y-4 pt-4 border-t border-dashed border-black/10">
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold opacity-50 uppercase">Tipo de Grade de Tamanho</label>
+                      <div className="flex gap-2">
+                        {[
+                          { id: 'numeric', label: '34-58' },
+                          { id: 'letters', label: 'PP-G3' },
+                          { id: 'infantil', label: 'Infantil' }
+                        ].map(type => (
+                          <button
+                            key={type.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedGridType(type.id as any);
+                              setSelectedSizes({});
+                            }}
+                            className={cn(
+                              "flex-1 py-2 text-xs font-bold rounded-xl border transition-all",
+                              selectedGridType === type.id 
+                                ? (isDarkMode ? "bg-jeans-blue border-jeans-blue text-white" : "bg-maria-pink border-maria-pink text-white")
+                                : (isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30 text-white/60" : "bg-gray-50 border-maria-pink/10 text-gray-500")
+                            )}
+                          >
+                            {type.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
                     <div className="flex justify-between items-center">
                       <p className="text-xs font-bold opacity-40 uppercase tracking-widest">Grade de Tamanhos & Quantidade</p>
                       <div className="flex gap-2">
@@ -888,12 +930,8 @@ export default function App() {
                     </div>
                     
                     <div className="grid grid-cols-1 gap-3">
-                      {/* Logic to determine which grid to show */}
                       {(() => {
-                        let grid: string[] = [];
-                        if (modalCategory === 'Infantil') grid = SIZE_GRIDS.infantil;
-                        else if (['Calça', 'Bermuda', 'Saia'].includes(modalType)) grid = SIZE_GRIDS.numeric;
-                        else grid = SIZE_GRIDS.letters;
+                        const grid = SIZE_GRIDS[selectedGridType];
 
                         return (
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
