@@ -20,9 +20,18 @@ import {
   PlusCircle,
   MinusCircle,
   CheckCircle,
-  ShoppingBag
+  ShoppingBag,
+  Download,
+  Upload,
+  Sparkles,
+  RefreshCw,
+  Lightbulb,
+  ChevronRight,
+  ArrowLeft,
+  Camera
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { GoogleGenAI } from "@google/genai";
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { clsx, type ClassValue } from 'clsx';
@@ -34,13 +43,14 @@ function cn(...inputs: ClassValue[]) {
 }
 
 // --- Types ---
-type Category = 'Feminino' | 'Masculino' | 'Infantil';
+type Category = string;
 type ProductType = string;
+type Brand = string;
 
 interface Product {
   id: string;
   model: string;
-  brand: string;
+  brand: Brand;
   category: Category;
   type: ProductType;
   size: string;
@@ -82,8 +92,17 @@ export default function App() {
     };
   });
 
-  const [activeTab, setActiveTab] = useState<'inventory' | 'history' | 'settings'>('inventory');
+  const [activeTab, setActiveTab] = useState<'inventory' | 'history' | 'settings' | 'marketing'>('inventory');
   const [inventoryFilter, setInventoryFilter] = useState<Category | 'Todos'>('Todos');
+  const [brandFilter, setBrandFilter] = useState<Brand | 'Todas'>('Todas');
+
+  // Cloud Sync State
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState<Date | null>(null);
+
+  // Categories & Brands State
+  const [categories, setCategories] = useState<Category[]>(['Feminino', 'Masculino', 'Infantil', 'Unissex', 'Acessórios']);
+  const [brands, setBrands] = useState<Brand[]>(['Maria Jeans', 'Sawary', 'Pit Bull', 'Consciência', 'Outras']);
 
   // Profile Edit State
   const [profileForm, setProfileForm] = useState({
@@ -104,6 +123,8 @@ export default function App() {
   const [modalCategory, setModalCategory] = useState<Category>('Feminino');
   const [modalType, setModalType] = useState<ProductType>('Calça');
   const [selectedGridType, setSelectedGridType] = useState<'numeric' | 'letters' | 'infantil'>('numeric');
+  const [modalBuyPrice, setModalBuyPrice] = useState<number>(0);
+  const [modalSellPrice, setModalSellPrice] = useState<number>(0);
 
   // Cart State
   const [cart, setCart] = useState<SaleItem[]>([]);
@@ -119,18 +140,94 @@ export default function App() {
   const [greeting, setGreeting] = useState('');
   const [motivationalMessage, setMotivationalMessage] = useState('');
 
-  // --- Persistence ---
+  // Marketing AI State
+  const [marketingChallenge, setMarketingChallenge] = useState<{
+    challenge: string;
+    script: string;
+    image?: string;
+    date?: string;
+  } | null>(() => {
+    const saved = localStorage.getItem('maria_jeans_marketing');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed.date === format(new Date(), 'yyyy-MM-dd')) return parsed;
+    }
+    return null;
+  });
+  const [isGeneratingMarketing, setIsGeneratingMarketing] = useState(false);
+
+  // --- Persistence & Cloud Sync ---
+  const fetchData = async () => {
+    setIsSyncing(true);
+    try {
+      const [pRes, sRes, prRes, cRes] = await Promise.all([
+        fetch('/api/products'),
+        fetch('/api/sales'),
+        fetch('/api/profile'),
+        fetch('/api/config')
+      ]);
+      
+      if (pRes.ok) setProducts(await pRes.json());
+      if (sRes.ok) {
+        const sales = await sRes.json();
+        setSalesHistory(sales.map((s: any) => ({ ...s, date: new Date(s.date) })));
+      }
+      if (prRes.ok) {
+        const profile = await prRes.json();
+        setUserProfile(profile);
+        setProfileForm(prev => ({ ...prev, name: profile.name }));
+      }
+      if (cRes.ok) {
+        const config = await cRes.json();
+        setCategories(config.categories);
+        setBrands(config.brands);
+      }
+      setLastSync(new Date());
+    } catch (error) {
+      console.error("Erro ao sincronizar dados:", error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const saveData = async (type: 'products' | 'sales' | 'profile' | 'config', data: any) => {
+    setIsSyncing(true);
+    try {
+      await fetch(`/api/${type}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      setLastSync(new Date());
+    } catch (error) {
+      console.error(`Erro ao salvar ${type}:`, error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   useEffect(() => {
+    fetchData();
+  }, []);
+
+  useEffect(() => {
+    if (isLoggedIn) saveData('profile', userProfile);
     localStorage.setItem('maria_jeans_profile', JSON.stringify(userProfile));
   }, [userProfile]);
 
   useEffect(() => {
+    if (isLoggedIn) saveData('products', products);
     localStorage.setItem('maria_jeans_products', JSON.stringify(products));
   }, [products]);
 
   useEffect(() => {
+    if (isLoggedIn) saveData('sales', salesHistory);
     localStorage.setItem('maria_jeans_sales', JSON.stringify(salesHistory));
   }, [salesHistory]);
+
+  useEffect(() => {
+    if (isLoggedIn) saveData('config', { categories, brands });
+  }, [categories, brands]);
 
   // --- Greeting Logic ---
   useEffect(() => {
@@ -149,6 +246,18 @@ export default function App() {
     ];
     setMotivationalMessage(messages[Math.floor(Math.random() * messages.length)]);
   }, [isLoggedIn]);
+
+  useEffect(() => {
+    if (isProductModalOpen) {
+      if (editingProduct) {
+        setModalBuyPrice(editingProduct.buyPrice);
+        setModalSellPrice(editingProduct.sellPrice);
+      } else {
+        setModalBuyPrice(0);
+        setModalSellPrice(0);
+      }
+    }
+  }, [isProductModalOpen, editingProduct]);
 
   // --- Handlers ---
   const handleLogin = (e: React.FormEvent) => {
@@ -229,6 +338,60 @@ export default function App() {
     }));
   };
 
+  const generateMarketingChallenge = async () => {
+    setIsGeneratingMarketing(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      
+      // 1. Generate Text Challenge
+      const textResponse = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Você é um especialista em marketing para a loja 'Maria Jeans'. 
+        O estoque atual tem produtos como: ${products.slice(0, 10).map(p => `${p.model} (${p.brand})`).join(', ')}.
+        Hoje é ${format(new Date(), "EEEE", { locale: ptBR })}.
+        Sugira um desafio de marketing diário para a dona Maria postar no Instagram/WhatsApp.
+        O desafio deve ser prático e direto.
+        Retorne APENAS um JSON no formato: {"challenge": "descrição curta do desafio", "script": "legenda sugerida para o post"}`,
+        config: { responseMimeType: "application/json" }
+      });
+
+      const data = JSON.parse(textResponse.text || '{}');
+      
+      // 2. Generate Reference Image
+      const imageResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: {
+          parts: [{ text: `A professional, high-quality aesthetic social media photo for a clothing store called Maria Jeans. The photo should show: ${data.challenge}. Lifestyle photography, bright lighting, trendy.` }]
+        },
+        config: {
+          imageConfig: { aspectRatio: "1:1" }
+        }
+      });
+
+      let imageUrl = '';
+      for (const part of imageResponse.candidates?.[0]?.content?.parts || []) {
+        if (part.inlineData) {
+          imageUrl = `data:image/png;base64,${part.inlineData.data}`;
+          break;
+        }
+      }
+
+      const newChallenge = {
+        ...data,
+        image: imageUrl,
+        date: format(new Date(), 'yyyy-MM-dd')
+      };
+
+      setMarketingChallenge(newChallenge);
+      localStorage.setItem('maria_jeans_marketing', JSON.stringify(newChallenge));
+    } catch (error) {
+      console.error("Erro ao gerar marketing:", error);
+      alert("Não consegui gerar a ideia agora. Tente novamente em instantes.");
+    } finally {
+      setIsGeneratingMarketing(false);
+    }
+  };
+
   const removeFromCart = (id: string) => {
     setCart(cart.filter(item => item.id !== id));
   };
@@ -284,14 +447,62 @@ export default function App() {
     alert('Perfil atualizado com sucesso!');
   };
 
+  const handleExportBackup = () => {
+    const backupData = {
+      products,
+      salesHistory,
+      userProfile,
+      categories,
+      brands,
+      exportDate: new Date().toISOString()
+    };
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `backup_maria_jeans_${format(new Date(), 'yyyy-MM-dd_HHmm')}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!confirm('ATENÇÃO: Isso irá substituir todos os dados atuais (estoque, vendas, etc) pelos dados deste arquivo de backup. Deseja continuar?')) {
+      e.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (data.products) setProducts(data.products);
+        if (data.salesHistory) setSalesHistory(data.salesHistory.map((s: any) => ({ ...s, date: new Date(s.date) })));
+        if (data.userProfile) setUserProfile(data.userProfile);
+        if (data.categories) setCategories(data.categories);
+        if (data.brands) setBrands(data.brands);
+        alert('Backup restaurado com sucesso! Os dados serão sincronizados com a nuvem automaticamente.');
+      } catch (err) {
+        alert('Erro ao ler o arquivo de backup. Verifique se o arquivo é válido.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const filteredProducts = products.filter(p => {
     const matchesSearch = p.model.toLowerCase().includes(searchQuery.toLowerCase()) ||
       p.brand.toLowerCase().includes(searchQuery.toLowerCase()) ||
       p.type.toLowerCase().includes(searchQuery.toLowerCase());
     
     const matchesCategory = inventoryFilter === 'Todos' || p.category === inventoryFilter;
+    const matchesBrand = brandFilter === 'Todas' || p.brand === brandFilter;
     
-    return matchesSearch && matchesCategory;
+    return matchesSearch && matchesCategory && matchesBrand;
   });
 
   // Group products by type, then by model/brand/price
@@ -422,7 +633,18 @@ export default function App() {
             )}
           </div>
           <div className="hidden md:block">
-            <h2 className="font-bold text-lg leading-tight">{greeting}, {userProfile.name}!</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="font-bold text-lg leading-tight">{greeting}, {userProfile.name}!</h2>
+              {isSyncing ? (
+                <div className="flex items-center gap-1 text-[10px] bg-blue-500/10 text-blue-500 px-2 py-0.5 rounded-full animate-pulse">
+                  <div className="w-1 h-1 bg-blue-500 rounded-full" /> Sincronizando...
+                </div>
+              ) : lastSync && (
+                <div className="text-[10px] opacity-40">
+                  Sincronizado {format(lastSync, 'HH:mm')}
+                </div>
+              )}
+            </div>
             <p className="text-xs opacity-60 italic truncate max-w-[300px]">"{motivationalMessage}"</p>
           </div>
           <div className="md:hidden">
@@ -445,9 +667,10 @@ export default function App() {
               </span>
             )}
           </button>
-          <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-3 rounded-xl hover:bg-black/5 transition-colors hidden md:block">
+          <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-3 rounded-xl hover:bg-black/5 transition-colors">
             {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
           </button>
+          
           <button onClick={handleLogout} className="p-3 rounded-xl hover:bg-red-50 text-red-500 transition-colors active:scale-90">
             <LogOut size={20} />
           </button>
@@ -517,21 +740,40 @@ export default function App() {
               </div>
 
               {/* Category Quick Filters */}
-              <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar flex-nowrap">
-                {['Todos', 'Feminino', 'Masculino', 'Infantil'].map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setInventoryFilter(cat as any)}
-                    className={cn(
-                      "px-5 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-all border",
-                      inventoryFilter === cat 
-                        ? (isDarkMode ? "bg-jeans-blue border-jeans-blue text-white" : "bg-maria-pink border-maria-pink text-white")
-                        : (isDarkMode ? "bg-jeans-blue/5 border-jeans-blue/20 opacity-60" : "bg-white border-maria-pink/10 opacity-60")
-                    )}
-                  >
-                    {cat}
-                  </button>
-                ))}
+              <div className="space-y-3">
+                <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar flex-nowrap">
+                  {['Todos', ...categories].map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setInventoryFilter(cat as any)}
+                      className={cn(
+                        "px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all border",
+                        inventoryFilter === cat 
+                          ? (isDarkMode ? "bg-jeans-blue border-jeans-blue text-white" : "bg-maria-pink border-maria-pink text-white")
+                          : (isDarkMode ? "bg-jeans-blue/5 border-jeans-blue/20 opacity-60" : "bg-white border-maria-pink/10 opacity-60")
+                      )}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar flex-nowrap">
+                  {['Todas', ...brands].map((brand) => (
+                    <button
+                      key={brand}
+                      onClick={() => setBrandFilter(brand as any)}
+                      className={cn(
+                        "px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all border",
+                        brandFilter === brand 
+                          ? (isDarkMode ? "bg-jeans-blue border-jeans-blue text-white" : "bg-maria-pink border-maria-pink text-white")
+                          : (isDarkMode ? "bg-jeans-blue/5 border-jeans-blue/20 opacity-60" : "bg-white border-maria-pink/10 opacity-60")
+                      )}
+                    >
+                      {brand}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="space-y-10">
@@ -623,6 +865,121 @@ export default function App() {
                   </div>
                 )}
               </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'marketing' && (
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 pb-24">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <h2 className="text-2xl font-bold">Assistente de Marketing</h2>
+                  <p className="text-sm opacity-60">Sua meta diária para brilhar nas redes sociais.</p>
+                </div>
+                <div className={cn("p-3 rounded-2xl", isDarkMode ? "bg-jeans-blue/20 text-jeans-blue" : "bg-maria-pink/10 text-maria-pink")}>
+                  <Sparkles size={24} />
+                </div>
+              </div>
+
+              {!marketingChallenge && !isGeneratingMarketing ? (
+                <div className={cn("p-8 rounded-3xl border-2 border-dashed flex flex-col items-center text-center space-y-4", isDarkMode ? "border-jeans-blue/20" : "border-maria-pink/20")}>
+                  <div className={cn("w-16 h-16 rounded-full flex items-center justify-center", isDarkMode ? "bg-jeans-blue/10" : "bg-maria-pink/5")}>
+                    <Lightbulb size={32} className={isDarkMode ? "text-jeans-blue" : "text-maria-pink"} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg">Pronta para o desafio de hoje?</h3>
+                    <p className="text-sm opacity-60 max-w-xs mx-auto">Nossa IA vai analisar seu estoque e sugerir a melhor forma de divulgar seus produtos hoje.</p>
+                  </div>
+                  <button 
+                    onClick={generateMarketingChallenge}
+                    className={cn(
+                      "px-8 py-4 rounded-2xl font-bold text-white shadow-lg transition-all active:scale-95 flex items-center gap-2",
+                      isDarkMode ? "bg-jeans-blue" : "bg-maria-pink"
+                    )}
+                  >
+                    Gerar Meta de Hoje
+                  </button>
+                </div>
+              ) : isGeneratingMarketing ? (
+                <div className={cn("p-12 rounded-3xl border flex flex-col items-center text-center space-y-6", isDarkMode ? "bg-jeans-dark/50 border-jeans-blue/20" : "bg-white border-maria-pink/10")}>
+                  <div className="relative">
+                    <div className={cn("w-20 h-20 rounded-full border-4 border-t-transparent animate-spin", isDarkMode ? "border-jeans-blue" : "border-maria-pink")} />
+                    <Sparkles className={cn("absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2", isDarkMode ? "text-jeans-blue" : "text-maria-pink")} size={24} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg">Criando sua estratégia...</h3>
+                    <p className="text-sm opacity-60">Analisando tendências e seu estoque para o melhor resultado.</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className={cn("p-6 rounded-3xl border shadow-sm space-y-4", isDarkMode ? "bg-jeans-dark border-jeans-blue/20" : "bg-white border-maria-pink/10")}>
+                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest opacity-50">
+                      <CheckCircle size={14} /> Desafio do Dia
+                    </div>
+                    <h3 className="text-xl font-bold leading-tight">{marketingChallenge?.challenge}</h3>
+                    
+                    {marketingChallenge?.image && (
+                      <div className="relative aspect-square rounded-2xl overflow-hidden border shadow-inner">
+                        <img src={marketingChallenge.image} alt="Referência" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/60 to-transparent text-white">
+                          <p className="text-[10px] font-bold uppercase opacity-80">Ideia de composição</p>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest opacity-50">
+                        <Camera size={14} /> Legenda Sugerida
+                      </div>
+                      <div className={cn("p-4 rounded-2xl text-sm italic leading-relaxed", isDarkMode ? "bg-jeans-blue/10" : "bg-maria-pink/5")}>
+                        "{marketingChallenge?.script}"
+                      </div>
+                    </div>
+
+                    <div className="pt-4 flex gap-3">
+                      <button 
+                        onClick={() => {
+                          if (navigator.share) {
+                            navigator.share({
+                              title: 'Meta de Marketing Maria Jeans',
+                              text: `${marketingChallenge?.challenge}\n\nLegenda: ${marketingChallenge?.script}`,
+                            });
+                          } else {
+                            alert('Copiado para a área de transferência!');
+                            navigator.clipboard.writeText(`${marketingChallenge?.challenge}\n\nLegenda: ${marketingChallenge?.script}`);
+                          }
+                        }}
+                        className={cn(
+                          "flex-1 py-3 rounded-xl font-bold text-white flex items-center justify-center gap-2",
+                          isDarkMode ? "bg-jeans-blue" : "bg-maria-pink"
+                        )}
+                      >
+                        Compartilhar Meta
+                      </button>
+                      <button 
+                        onClick={generateMarketingChallenge}
+                        className={cn(
+                          "p-3 rounded-xl border transition-all active:scale-95",
+                          isDarkMode ? "border-jeans-blue/30 text-jeans-blue" : "border-maria-pink/30 text-maria-pink"
+                        )}
+                        title="Gerar outra ideia"
+                      >
+                        <RefreshCw size={20} className={isGeneratingMarketing ? "animate-spin" : ""} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className={cn("p-6 rounded-3xl border border-dashed flex items-start gap-4", isDarkMode ? "bg-jeans-blue/5 border-jeans-blue/20" : "bg-maria-pink/5 border-maria-pink/20")}>
+                    <div className={cn("p-2 rounded-lg", isDarkMode ? "bg-jeans-blue/20 text-jeans-blue" : "bg-maria-pink/10 text-maria-pink")}>
+                      <Lightbulb size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm mb-1">Dica da Maria</h4>
+                      <p className="text-xs opacity-70 leading-relaxed">Lembre-se de usar uma boa iluminação natural! Fotos tiradas perto da janela costumam valorizar muito mais o jeans.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -750,6 +1107,86 @@ export default function App() {
                     </div>
                   </div>
 
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-6 border-t border-dashed border-black/10">
+                    <div className="space-y-4">
+                      <h3 className="text-sm font-bold opacity-50 uppercase flex items-center gap-2">
+                        <Package size={16} /> Categorias
+                      </h3>
+                      <div className="flex flex-wrap gap-2">
+                        {categories.map(cat => (
+                          <div key={cat} className={cn("flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold border", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30" : "bg-maria-pink/5 border-maria-pink/20 text-maria-pink")}>
+                            {cat}
+                            <button type="button" onClick={() => setCategories(categories.filter(c => c !== cat))} className="hover:text-red-500"><X size={12} /></button>
+                          </div>
+                        ))}
+                        <button 
+                          type="button" 
+                          onClick={() => {
+                            const name = prompt('Nome da nova categoria:');
+                            if (name && !categories.includes(name)) setCategories([...categories, name]);
+                          }}
+                          className={cn("px-3 py-1 rounded-full text-xs font-bold border border-dashed", isDarkMode ? "border-jeans-blue/30" : "border-maria-pink/30")}
+                        >
+                          + Adicionar
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <h3 className="text-sm font-bold opacity-50 uppercase flex items-center gap-2">
+                        <ShoppingBag size={16} /> Marcas
+                      </h3>
+                      <div className="flex flex-wrap gap-2">
+                        {brands.map(brand => (
+                          <div key={brand} className={cn("flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold border", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30" : "bg-maria-pink/5 border-maria-pink/20 text-maria-pink")}>
+                            {brand}
+                            <button type="button" onClick={() => setBrands(brands.filter(b => b !== brand))} className="hover:text-red-500"><X size={12} /></button>
+                          </div>
+                        ))}
+                        <button 
+                          type="button" 
+                          onClick={() => {
+                            const name = prompt('Nome da nova marca:');
+                            if (name && !brands.includes(name)) setBrands([...brands, name]);
+                          }}
+                          className={cn("px-3 py-1 rounded-full text-xs font-bold border border-dashed", isDarkMode ? "border-jeans-blue/30" : "border-maria-pink/30")}
+                        >
+                          + Adicionar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-8 border-t border-dashed border-black/10">
+                    <div className="bg-jeans-blue/5 rounded-2xl p-6 border border-jeans-blue/10">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div>
+                          <h3 className="font-bold text-lg mb-1">Backup de Segurança</h3>
+                          <p className="text-sm opacity-60">Baixe uma cópia manual dos seus dados ou restaure um backup antigo.</p>
+                        </div>
+                        <div className="flex flex-col sm:flex-row gap-3">
+                          <button 
+                            type="button"
+                            onClick={handleExportBackup}
+                            className={cn(
+                              "w-full sm:w-auto px-6 py-3 rounded-xl font-bold text-white flex items-center justify-center gap-2 shadow-md transition-all active:scale-95",
+                              isDarkMode ? "bg-jeans-blue" : "bg-maria-pink"
+                            )}
+                          >
+                            <Download size={20} /> Exportar
+                          </button>
+                          <label className={cn(
+                            "w-full sm:w-auto px-6 py-3 rounded-xl font-bold border flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95",
+                            isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30 text-white" : "bg-white border-maria-pink/20 text-maria-pink"
+                          )}>
+                            <Upload size={20} /> Importar
+                            <input type="file" accept=".json" className="hidden" onChange={handleImportBackup} />
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   <button 
                     type="submit"
                     className={cn(
@@ -769,6 +1206,7 @@ export default function App() {
       {/* Nav */}
       <nav className={cn("p-2 border-t fixed bottom-0 left-0 right-0 z-30 flex justify-around items-center backdrop-blur-md", isDarkMode ? "bg-jeans-dark/80 border-jeans-blue/20" : "bg-white/80 border-maria-pink/10")}>
         <NavButton active={activeTab === 'inventory'} onClick={() => setActiveTab('inventory')} icon={<Package size={24} />} label="Estoque" isDarkMode={isDarkMode} />
+        <NavButton active={activeTab === 'marketing'} onClick={() => setActiveTab('marketing')} icon={<Sparkles size={24} />} label="Marketing" isDarkMode={isDarkMode} />
         <NavButton active={activeTab === 'history'} onClick={() => setActiveTab('history')} icon={<History size={24} />} label="Vendas" isDarkMode={isDarkMode} />
         <NavButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings size={24} />} label="Perfil" isDarkMode={isDarkMode} />
       </nav>
@@ -825,7 +1263,14 @@ export default function App() {
                   </div>
                   <div>
                     <label className="text-xs font-bold opacity-50 uppercase">Marca</label>
-                    <input name="brand" defaultValue={editingProduct?.brand} required className={cn("w-full px-4 py-3 rounded-xl border focus:ring-2", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30 focus:ring-jeans-blue" : "bg-gray-50 border-maria-pink/20 focus:ring-maria-pink")} placeholder="Ex: Maria Jeans" />
+                    <select 
+                      name="brand" 
+                      defaultValue={editingProduct?.brand || brands[0]} 
+                      required 
+                      className={cn("w-full px-4 py-3 rounded-xl border focus:ring-2", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30 focus:ring-jeans-blue" : "bg-gray-50 border-maria-pink/20 focus:ring-maria-pink")}
+                    >
+                      {brands.map(b => <option key={b} value={b}>{b}</option>)}
+                    </select>
                   </div>
                   <div>
                     <label className="text-xs font-bold opacity-50 uppercase">Tipo de Peça</label>
@@ -863,9 +1308,7 @@ export default function App() {
                       }}
                       className={cn("w-full px-4 py-3 rounded-xl border focus:ring-2", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30 focus:ring-jeans-blue" : "bg-gray-50 border-maria-pink/20 focus:ring-maria-pink")}
                     >
-                      <option value="Feminino">Feminino</option>
-                      <option value="Masculino">Masculino</option>
-                      <option value="Infantil">Infantil</option>
+                      {categories.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
                   
@@ -884,12 +1327,45 @@ export default function App() {
 
                   <div>
                     <label className="text-xs font-bold opacity-50 uppercase">Preço Compra (R$)</label>
-                    <input name="buyPrice" type="number" step="0.01" defaultValue={editingProduct?.buyPrice} required className={cn("w-full px-4 py-3 rounded-xl border focus:ring-2", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30 focus:ring-jeans-blue" : "bg-gray-50 border-maria-pink/20 focus:ring-maria-pink")} />
+                    <input 
+                      name="buyPrice" 
+                      type="number" 
+                      step="0.01" 
+                      value={modalBuyPrice || ''} 
+                      onChange={(e) => setModalBuyPrice(Number(e.target.value))}
+                      required 
+                      className={cn("w-full px-4 py-3 rounded-xl border focus:ring-2", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30 focus:ring-jeans-blue" : "bg-gray-50 border-maria-pink/20 focus:ring-maria-pink")} 
+                    />
                   </div>
                   <div>
                     <label className="text-xs font-bold opacity-50 uppercase">Preço Venda (R$)</label>
-                    <input name="sellPrice" type="number" step="0.01" defaultValue={editingProduct?.sellPrice} required className={cn("w-full px-4 py-3 rounded-xl border focus:ring-2", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30 focus:ring-jeans-blue" : "bg-gray-50 border-maria-pink/20 focus:ring-maria-pink")} />
+                    <input 
+                      name="sellPrice" 
+                      type="number" 
+                      step="0.01" 
+                      value={modalSellPrice || ''} 
+                      onChange={(e) => setModalSellPrice(Number(e.target.value))}
+                      required 
+                      className={cn("w-full px-4 py-3 rounded-xl border focus:ring-2", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30 focus:ring-jeans-blue" : "bg-gray-50 border-maria-pink/20 focus:ring-maria-pink")} 
+                    />
                   </div>
+                  
+                  {modalBuyPrice > 0 && modalSellPrice > 0 && (
+                    <div className="col-span-2">
+                      <div className={cn(
+                        "p-3 rounded-xl flex items-center justify-between",
+                        isDarkMode ? "bg-jeans-blue/5" : "bg-gray-50"
+                      )}>
+                        <span className="text-xs font-bold opacity-60 uppercase">Margem de Lucro</span>
+                        <span className={cn(
+                          "font-bold",
+                          modalSellPrice > modalBuyPrice ? "text-green-500" : "text-red-500"
+                        )}>
+                          {(((modalSellPrice - modalBuyPrice) / modalBuyPrice) * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {!editingProduct && (
