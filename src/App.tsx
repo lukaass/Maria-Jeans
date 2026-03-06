@@ -35,7 +35,7 @@ function cn(...inputs: ClassValue[]) {
 
 // --- Types ---
 type Category = 'Feminino' | 'Masculino' | 'Infantil';
-type ProductType = 'Calça' | 'Bermuda' | 'Camisa' | 'Jaqueta' | 'Vestido' | 'Saia' | 'Outros';
+type ProductType = string;
 
 interface Product {
   id: string;
@@ -330,7 +330,8 @@ export default function App() {
     infantil: ['0-3m', '3-6m', '6-9m', '9-12m', '1', '2', '3', '4', '6', '8', '10', '12', '14', '16']
   };
 
-  const PRODUCT_TYPES: ProductType[] = ['Calça', 'Bermuda', 'Camisa', 'Jaqueta', 'Vestido', 'Saia', 'Outros'];
+  const DEFAULT_PRODUCT_TYPES = ['Calça', 'Bermuda', 'Shorts', 'Camisa', 'Jaqueta', 'Vestido', 'Saia'];
+  const allProductTypes = Array.from(new Set([...DEFAULT_PRODUCT_TYPES, ...products.map(p => p.type)]));
 
   // --- Views ---
 
@@ -827,14 +828,18 @@ export default function App() {
                   </div>
                   <div>
                     <label className="text-xs font-bold opacity-50 uppercase">Tipo de Peça</label>
-                    <select 
+                    <input 
                       name="type" 
+                      list="type-suggestions"
                       value={modalType}
-                      onChange={(e) => setModalType(e.target.value as ProductType)}
+                      onChange={(e) => setModalType(e.target.value)}
+                      required
                       className={cn("w-full px-4 py-3 rounded-xl border focus:ring-2", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30 focus:ring-jeans-blue" : "bg-gray-50 border-maria-pink/20 focus:ring-maria-pink")}
-                    >
-                      {PRODUCT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                    </select>
+                      placeholder="Ex: Calça, Shorts..."
+                    />
+                    <datalist id="type-suggestions">
+                      {allProductTypes.map(t => <option key={t} value={t} />)}
+                    </datalist>
                   </div>
                   <div>
                     <label className="text-xs font-bold opacity-50 uppercase">Categoria</label>
