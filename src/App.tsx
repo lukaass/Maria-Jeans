@@ -57,6 +57,7 @@ interface Product {
   buyPrice: number;
   sellPrice: number;
   stock: number;
+  isActive?: boolean;
 }
 
 interface SaleItem extends Product {
@@ -129,6 +130,8 @@ export default function App() {
   // Cart State
   const [cart, setCart] = useState<SaleItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isStockAlertOpen, setIsStockAlertOpen] = useState(false);
+  const [stockAlertProduct, setStockAlertProduct] = useState<Product | null>(null);
 
   // Sales History
   const [salesHistory, setSalesHistory] = useState<Sale[]>(() => {
@@ -301,6 +304,37 @@ export default function App() {
     setEditingProduct(null);
   };
 
+  const handleQuickStockChange = (id: string, delta: number) => {
+    const product = products.find(p => p.id === id);
+    if (!product) return;
+
+    const newStock = Math.max(0, product.stock + delta);
+    
+    if (product.stock === 1 && newStock === 0) {
+      setStockAlertProduct(product);
+      setIsStockAlertOpen(true);
+    }
+
+    const updatedProducts = products.map(p => p.id === id ? { ...p, stock: newStock } : p);
+    
+    const modelKey = `${product.model}-${product.brand}-${product.sellPrice}-${product.category}`;
+    const modelItems = updatedProducts.filter(p => 
+      `${p.model}-${p.brand}-${p.sellPrice}-${p.category}` === modelKey
+    );
+    
+    const allZero = modelItems.every(item => item.stock === 0);
+    
+    if (allZero && modelItems.length > 0) {
+      if (confirm(`Todos os tamanhos do modelo ${product.model} estão zerados. Deseja excluir este cadastro por completo?`)) {
+        setProducts(prev => prev.filter(p => `${p.model}-${p.brand}-${p.sellPrice}-${p.category}` !== modelKey));
+        setCart(prev => prev.filter(item => `${item.model}-${item.brand}-${item.sellPrice}-${item.category}` !== modelKey));
+        return;
+      }
+    }
+
+    setProducts(updatedProducts);
+  };
+
   const deleteProduct = (id: string) => {
     if (confirm('Deseja excluir este produto?')) {
       setProducts(products.filter(p => p.id !== id));
@@ -309,8 +343,13 @@ export default function App() {
   };
 
   const addToCart = (product: Product) => {
+    if (product.isActive === false) {
+      alert('Este produto está desativado e não pode ser vendido.');
+      return;
+    }
     if (product.stock <= 0) {
-      alert('Produto sem estoque!');
+      setStockAlertProduct(product);
+      setIsStockAlertOpen(true);
       return;
     }
     const existing = cart.find(item => item.id === product.id);
@@ -795,9 +834,15 @@ export default function App() {
                             key={gIdx} 
                             className={cn(
                               "p-5 rounded-2xl border shadow-sm group relative overflow-hidden flex flex-col", 
-                              isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/20" : "bg-white border-maria-pink/10"
+                              isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/20" : "bg-white border-maria-pink/10",
+                              group.items.every(i => i.isActive === false) && "opacity-60 grayscale-[0.5]"
                             )}
                           >
+                            {group.items.every(i => i.isActive === false) && (
+                              <div className="absolute top-2 right-2 z-10">
+                                <span className="bg-gray-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase">Inativo</span>
+                              </div>
+                            )}
                             <div className="flex justify-between items-start mb-3">
                               <span className={cn(
                                 "text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full", 
@@ -813,22 +858,46 @@ export default function App() {
                             
                             <div className="flex-1">
                               <p className="text-[10px] opacity-50 uppercase font-bold mb-2">Tamanhos Disponíveis</p>
-                              <div className="flex flex-wrap gap-1.5 mb-6">
+                              <div className="flex flex-wrap gap-2 mb-6">
                                 {group.items.sort((a, b) => a.size.localeCompare(b.size, undefined, {numeric: true})).map(item => (
-                                  <button
+                                  <div 
                                     key={item.id}
-                                    onClick={() => addToCart(item)}
                                     className={cn(
-                                      "px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-all active:scale-90 flex flex-col items-center min-w-[40px]",
-                                      item.stock > 0 
-                                        ? (isDarkMode ? "bg-jeans-blue/20 border-jeans-blue/40 hover:bg-jeans-blue" : "bg-maria-pink/5 border-maria-pink/20 hover:bg-maria-pink/10 text-maria-pink")
-                                        : "opacity-30 cursor-not-allowed grayscale"
+                                      "flex flex-col items-center border rounded-xl p-1.5 min-w-[65px] transition-all",
+                                      item.stock > 0 && item.isActive !== false
+                                        ? (isDarkMode ? "bg-jeans-blue/5 border-jeans-blue/20" : "bg-white border-maria-pink/10")
+                                        : "opacity-40 bg-gray-50 grayscale"
                                     )}
-                                    title={`Estoque: ${item.stock}`}
                                   >
-                                    <span>{item.size}</span>
-                                    <span className="text-[8px] opacity-60 font-normal">{item.stock}un</span>
-                                  </button>
+                                    <button 
+                                      onClick={() => {
+                                        if (item.isActive === false) return;
+                                        addToCart(item);
+                                      }}
+                                      className="w-full text-center mb-1.5 group/size"
+                                      title="Clique para adicionar ao carrinho"
+                                    >
+                                      <span className="text-xs font-black group-hover/size:text-maria-pink transition-colors">{item.size}</span>
+                                    </button>
+                                    
+                                    <div className="flex items-center justify-between w-full px-1">
+                                      <button 
+                                        onClick={(e) => { e.stopPropagation(); handleQuickStockChange(item.id, -1); }}
+                                        className="text-red-500 hover:scale-125 transition-transform"
+                                      >
+                                        <MinusCircle size={14} />
+                                      </button>
+                                      
+                                      <span className="text-[10px] font-bold tabular-nums">{item.stock}</span>
+
+                                      <button 
+                                        onClick={(e) => { e.stopPropagation(); handleQuickStockChange(item.id, 1); }}
+                                        className="text-green-500 hover:scale-125 transition-transform"
+                                      >
+                                        <PlusCircle size={14} />
+                                      </button>
+                                    </div>
+                                  </div>
                                 ))}
                               </div>
                             </div>
@@ -841,15 +910,44 @@ export default function App() {
                               <div className="flex gap-1">
                                 <button 
                                   onClick={() => { 
-                                    // Edit the first item as a proxy for the group, or we might need a better edit flow
                                     setEditingProduct(group.items[0]); 
                                     setModalCategory(group.category);
                                     setModalType(group.type);
                                     setIsProductModalOpen(true); 
                                   }} 
                                   className="p-2 rounded-xl bg-black/5 hover:bg-black/10 transition-colors"
+                                  title="Configurações"
                                 >
                                   <Settings size={16} />
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    const idsToToggle = group.items.map(i => i.id);
+                                    const allActive = group.items.every(i => i.isActive !== false);
+                                    setProducts(products.map(p => idsToToggle.includes(p.id) ? { ...p, isActive: !allActive } : p));
+                                  }} 
+                                  className={cn(
+                                    "p-2 rounded-xl transition-colors",
+                                    group.items.every(i => i.isActive !== false) 
+                                      ? "bg-green-50 text-green-500 hover:bg-green-100" 
+                                      : "bg-gray-100 text-gray-400 hover:bg-gray-200"
+                                  )}
+                                  title={group.items.every(i => i.isActive !== false) ? "Desativar Modelo" : "Ativar Modelo"}
+                                >
+                                  <CheckCircle size={16} />
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    if (confirm(`Deseja excluir permanentemente o modelo ${group.model} e todos os seus tamanhos do sistema?`)) {
+                                      const modelKey = `${group.model}-${group.brand}-${group.sellPrice}-${group.category}`;
+                                      setProducts(prev => prev.filter(p => `${p.model}-${p.brand}-${p.sellPrice}-${p.category}` !== modelKey));
+                                      setCart(prev => prev.filter(item => `${item.model}-${item.brand}-${item.sellPrice}-${item.category}` !== modelKey));
+                                    }
+                                  }} 
+                                  className="p-2 rounded-xl bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
+                                  title="Excluir Modelo Completamente"
+                                >
+                                  <Trash2 size={16} />
                                 </button>
                               </div>
                             </div>
@@ -1234,12 +1332,30 @@ export default function App() {
                 };
 
                 if (editingProduct) {
-                  updateProduct({ 
+                  // Update existing size
+                  const updatedProduct = { 
                     ...baseData, 
                     id: editingProduct.id, 
                     size: formData.get('size') as string,
-                    stock: Number(formData.get('stock'))
-                  });
+                    stock: Number(formData.get('stock')),
+                    isActive: formData.get('isActive') === 'on'
+                  };
+                  
+                  // Also check if user added NEW sizes while editing
+                  const newEntries: Product[] = Object.entries(selectedSizes)
+                    .filter(([_, qty]) => (qty as number) > 0)
+                    .map(([size, qty]) => ({
+                      ...baseData,
+                      id: Math.random().toString(36).substr(2, 9),
+                      size,
+                      stock: qty as number,
+                      isActive: true
+                    }));
+
+                  setProducts([...products.map(p => p.id === editingProduct.id ? updatedProduct : p), ...newEntries]);
+                  setIsProductModalOpen(false);
+                  setEditingProduct(null);
+                  setSelectedSizes({});
                 } else {
                   addBulkProducts(baseData, selectedSizes);
                 }
@@ -1314,13 +1430,18 @@ export default function App() {
                   
                   {editingProduct ? (
                     <>
-                      <div>
-                        <label className="text-xs font-bold opacity-50 uppercase">Tamanho</label>
-                        <input name="size" defaultValue={editingProduct.size} required className={cn("w-full px-4 py-3 rounded-xl border", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30" : "bg-gray-50 border-maria-pink/20")} />
-                      </div>
-                      <div>
-                        <label className="text-xs font-bold opacity-50 uppercase">Estoque</label>
-                        <input name="stock" type="number" defaultValue={editingProduct.stock} required className={cn("w-full px-4 py-3 rounded-xl border", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30" : "bg-gray-50 border-maria-pink/20")} />
+                      <div className="col-span-2 p-4 bg-maria-pink/5 rounded-2xl border border-maria-pink/10 mb-2">
+                        <p className="text-[10px] font-bold uppercase opacity-50 mb-3">Editando Tamanho Atual</p>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-xs font-bold opacity-50 uppercase">Tamanho</label>
+                            <input name="size" defaultValue={editingProduct.size} required className={cn("w-full px-4 py-3 rounded-xl border", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30" : "bg-white border-maria-pink/20")} />
+                          </div>
+                          <div>
+                            <label className="text-xs font-bold opacity-50 uppercase">Estoque</label>
+                            <input name="stock" type="number" defaultValue={editingProduct.stock} required className={cn("w-full px-4 py-3 rounded-xl border", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30" : "bg-white border-maria-pink/20")} />
+                          </div>
+                        </div>
                       </div>
                     </>
                   ) : null}
@@ -1349,6 +1470,23 @@ export default function App() {
                       className={cn("w-full px-4 py-3 rounded-xl border focus:ring-2", isDarkMode ? "bg-jeans-blue/10 border-jeans-blue/30 focus:ring-jeans-blue" : "bg-gray-50 border-maria-pink/20 focus:ring-maria-pink")} 
                     />
                   </div>
+
+                  {editingProduct && (
+                    <div className="col-span-2">
+                      <label className="flex items-center gap-3 p-4 rounded-xl border cursor-pointer hover:bg-black/5 transition-colors">
+                        <input 
+                          type="checkbox" 
+                          name="isActive" 
+                          defaultChecked={editingProduct.isActive !== false}
+                          className="w-5 h-5 rounded accent-maria-pink"
+                        />
+                        <div>
+                          <p className="font-bold text-sm">Produto Ativo</p>
+                          <p className="text-xs opacity-60">Se desativado, o produto não poderá ser vendido.</p>
+                        </div>
+                      </label>
+                    </div>
+                  )}
                   
                   {modalBuyPrice > 0 && modalSellPrice > 0 && (
                     <div className="col-span-2">
@@ -1368,10 +1506,12 @@ export default function App() {
                   )}
                 </div>
 
-                {!editingProduct && (
-                  <div className="space-y-4 pt-4 border-t border-dashed border-black/10">
+                {/* Size Grid Section */}
+                <div className="space-y-4 pt-4 border-t border-dashed border-black/10">
                     <div className="space-y-2">
-                      <label className="text-xs font-bold opacity-50 uppercase">Tipo de Grade de Tamanho</label>
+                      <label className="text-xs font-bold opacity-50 uppercase">
+                        {editingProduct ? 'Adicionar Outros Tamanhos a este Modelo' : 'Tipo de Grade de Tamanho'}
+                      </label>
                       <div className="flex gap-2">
                         {[
                           { id: 'numeric', label: '34-58' },
@@ -1446,12 +1586,35 @@ export default function App() {
                       })()}
                     </div>
                   </div>
-                )}
 
                 <button type="submit" className={cn("w-full py-4 rounded-2xl font-bold text-white shadow-lg", isDarkMode ? "bg-jeans-blue" : "bg-maria-pink")}>
-                  {editingProduct ? 'Salvar Alterações' : 'Cadastrar Lote de Produtos'}
+                  {editingProduct ? 'Salvar Alterações e Novos Tamanhos' : 'Cadastrar Lote de Produtos'}
                 </button>
               </form>
+            </motion.div>
+          </div>
+        )}
+
+        {isStockAlertOpen && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsStockAlertOpen(false)} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className={cn("relative w-full max-w-sm p-8 rounded-3xl shadow-2xl text-center", isDarkMode ? "bg-jeans-dark text-white" : "bg-white text-gray-800")}>
+              <div className="w-20 h-20 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Package size={40} />
+              </div>
+              <h2 className="text-2xl font-bold mb-2">Produto Sem Estoque</h2>
+              <p className="opacity-60 mb-8">
+                O produto <span className="font-bold">{stockAlertProduct?.model}</span> (Tam: {stockAlertProduct?.size}) não possui unidades disponíveis no momento.
+              </p>
+              <button 
+                onClick={() => setIsStockAlertOpen(false)}
+                className={cn(
+                  "w-full py-4 rounded-2xl font-bold text-white shadow-lg",
+                  isDarkMode ? "bg-jeans-blue" : "bg-maria-pink"
+                )}
+              >
+                Entendido
+              </button>
             </motion.div>
           </div>
         )}
@@ -1471,13 +1634,27 @@ export default function App() {
                   <div key={item.id} className={cn("p-4 rounded-2xl border flex items-center gap-4", isDarkMode ? "bg-jeans-blue/5 border-jeans-blue/20" : "bg-gray-50 border-maria-pink/10")}>
                     <div className="flex-1">
                       <h4 className="font-bold">{item.model}</h4>
-                      <p className="text-xs opacity-60">R$ {item.sellPrice.toFixed(2)}</p>
+                      <p className="text-[10px] opacity-60 uppercase font-bold">{item.brand} - Tam: {item.size}</p>
+                      <p className="text-xs font-bold text-maria-pink">R$ {item.sellPrice.toFixed(2)}</p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => updateCartQuantity(item.id, -1)} className="p-1 hover:bg-black/5 rounded-full"><MinusCircle size={20} /></button>
-                      <span className="font-bold w-6 text-center">{item.quantity}</span>
-                      <button onClick={() => updateCartQuantity(item.id, 1)} className="p-1 hover:bg-black/5 rounded-full"><PlusCircle size={20} /></button>
-                      <button onClick={() => removeFromCart(item.id)} className="ml-2 p-2 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button>
+                    <div className="flex flex-col items-end gap-2">
+                      <div className="flex items-center gap-2 bg-black/5 rounded-xl p-1">
+                        <button onClick={() => updateCartQuantity(item.id, -1)} className="p-1 hover:bg-black/10 rounded-lg transition-colors"><MinusCircle size={18} /></button>
+                        <input 
+                          type="number" 
+                          value={item.quantity}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value);
+                            const product = products.find(p => p.id === item.id);
+                            if (!isNaN(val) && val > 0 && product && val <= product.stock) {
+                              setCart(cart.map(c => c.id === item.id ? { ...c, quantity: val } : c));
+                            }
+                          }}
+                          className="w-8 text-center bg-transparent font-bold text-sm focus:outline-none"
+                        />
+                        <button onClick={() => updateCartQuantity(item.id, 1)} className="p-1 hover:bg-black/10 rounded-lg transition-colors"><PlusCircle size={18} /></button>
+                      </div>
+                      <button onClick={() => removeFromCart(item.id)} className="text-[10px] text-red-500 font-bold uppercase hover:underline">Remover</button>
                     </div>
                   </div>
                 ))}
